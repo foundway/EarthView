@@ -1,0 +1,27 @@
+{
+  "name": "earth-view",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A standalone Cesium 3D Earth viewer",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "cesium": "^1.144.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6",
+    "vite-plugin-static-copy": "^3.4.0",
+    "vitest": "^3.2.7"
+  }
+}
