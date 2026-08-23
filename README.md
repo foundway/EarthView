@@ -70,14 +70,11 @@ implement a globe renderer from scratch.
 ### Static Cesium assets
 
 Cesium loads workers, widget assets, and other files at runtime.
-`vite.config.ts` copies these directories from `node_modules/cesium` into:
-
-```text
-dist/cesiumStatic/
-```
-
-`src/main.ts` sets `window.CESIUM_BASE_URL` to the same path. Keep those two
-values aligned if the asset directory is renamed.
+`vite.config.ts` copies these directories from `node_modules/cesium` into
+`dist/cesiumStatic/` and defines `CESIUM_BASE_URL` as `{base}cesiumStatic`
+(so GitHub Pages builds resolve under `/EarthView/cesiumStatic`).
+`src/main.ts` assigns that value to `window.CESIUM_BASE_URL`. Keep the copy
+destination and the defined URL aligned if the asset directory is renamed.
 
 ## Imagery and terrain
 
@@ -149,19 +146,44 @@ Cesium 3D Tiles rather than thousands of independent UI-managed objects.
 `npm run build` produces a static `dist/` directory. Deploy it to any static
 host:
 
-- GitHub Pages
+- GitHub Pages (recommended preview — see below)
 - Cloudflare Pages
 - Netlify
 - Vercel
 - S3 + CloudFront
 - nginx
 
-The host must serve the files under `dist/cesiumStatic/` at
-`/cesiumStatic/`. No server runtime is otherwise required.
+The host must serve the files under `dist/cesiumStatic/` at the same path the
+app uses for `CESIUM_BASE_URL`. No server runtime is otherwise required.
 
-If deploying under a non-root path such as `/EarthView/`, set Vite's `base`
-option and update `CESIUM_BASE_URL` so the copied Cesium assets resolve under
-that prefix.
+### GitHub Pages preview
+
+This repo deploys to GitHub Pages via `.github/workflows/deploy-pages.yml` on
+every push to `main` (and via **Actions → Deploy GitHub Pages → Run workflow**).
+
+Preview URL after the first successful deploy:
+
+<https://foundway.github.io/EarthView/>
+
+**One-time repo setup** (required before the workflow can publish):
+
+1. Make the repository **public**, or use a GitHub plan that allows Pages on
+   private repos (Pages sites are public by default).
+2. Open **Settings → Pages**.
+3. Under **Build and deployment → Source**, choose **GitHub Actions**.
+
+The workflow builds with `VITE_BASE=/EarthView/` so Vite assets and Cesium
+static files resolve under the project-site subpath. Local `npm run dev` /
+`npm run build` keep the default base `/` and need no env vars.
+
+To preview a production-style Pages build locally:
+
+```bash
+VITE_BASE=/EarthView/ npm run build
+npx vite preview --base /EarthView/
+```
+
+Then open <http://localhost:4173/EarthView/>.
 
 ## License
 
