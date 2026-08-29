@@ -152,11 +152,17 @@ export const HOME_VIEW = {
 
 Live Trends data requires a Node runtime. Deploy the repository to Vercel so
 `api/trends.ts` runs as a serverless function and the Vite output is served
-from `dist` (`vercel.json`). Add the same server-only Google variables in
-project settings. The service account needs permission to create BigQuery jobs
-in the billing project; public Trends tables are read from
-`bigquery-public-data`. Live data will not appear until those variables are
-set.
+from `dist`. `vercel.json` pins the Framework Preset to **Vite** (this is not
+a Next.js app). If a deploy fails with "No Next.js version detected", the
+Vercel project still has Framework Preset set to Next.js: change it to Vite
+under Project Settings → Build and Deployment, then redeploy. Do not add a
+`next` dependency.
+
+Add the same server-only Google variables in project settings. The service
+account needs permission to create BigQuery jobs in the billing project;
+public Trends tables are read from `bigquery-public-data`. Live data will not
+appear until those variables are set. Function memory is controlled in the
+Vercel dashboard (Fluid compute), not in `vercel.json`.
 
 The host must serve the files under `dist/cesiumStatic/` at the same path the
 app uses for `CESIUM_BASE_URL`. A non-Vercel host needs an equivalent Node

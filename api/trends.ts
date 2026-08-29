@@ -5,42 +5,33 @@ import {
   TrendsRequestError,
 } from "../server/trends.js";
 
-interface ApiRequest {
-  readonly method?: string;
-  readonly query: Record<string, string | readonly string[] | undefined>;
-}
-
-interface ApiResponse {
-  status(code: number): ApiResponse;
-  json(body: unknown): void;
-  setHeader(name: string, value: string): void;
-}
-
-export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
-  if (req.method !== "GET") {
-    res.setHeader("Allow", "GET");
-    res.status(405).json({ error: "Method not allowed" });
-    return;
-  }
-
+export async function GET(request: Request): Promise<Response> {
   try {
-    const query = parseTrendsQuery(req.query);
+    const url = new URL(request.url);
+    const values: Record<string, string> = {};
+    for (const [key, value] of url.searchParams) values[key] = value;
+
+    const query = parseTrendsQuery(values);
     const payload = await loadTrends(query);
-    res.setHeader("Cache-Control", "public, s-maxage=900, stale-while-revalidate=3600");
-    res.status(200).json(payload);
+    return Response.json(payload, {
+      headers: {
+        "Cache-Control": "public, s-maxage=900, stale-while-revalidate=3600",
+      },
+    });
   } catch (error) {
     if (error instanceof TrendsRequestError) {
-      res.status(400).json({ error: error.message });
-      return;
+      return Response.json({ error: error.message }, { status: 400 });
     }
     if (error instanceof TrendsConfigError) {
-      res.status(503).json({ error: error.message });
-      return;
+      return Response.json({ error: error.message }, { status: 503 });
     }
     console.error("trends API failed:", error);
-    res.status(502).json({
-      error:
-        "Google Trends could not be queried. Verify BigQuery access, billing project, and Google credentials.",
-    });
+    return Response.json(
+      {
+        error:
+          "Google Trends could not be queried. Verify BigQuery access, billing project, and Google credentials.",
+      },
+      { status: 502 },
+    );
   }
 }
