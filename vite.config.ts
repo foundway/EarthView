@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+import { trendsApiDevPlugin } from "./dev/trendsApiPlugin";
 
 const cesiumSource = "node_modules/cesium/Build/Cesium";
 const cesiumAssetDir = "cesiumStatic";
@@ -14,6 +15,7 @@ export default defineConfig({
     CESIUM_BASE_URL: JSON.stringify(cesiumBaseUrl),
   },
   plugins: [
+    trendsApiDevPlugin(),
     viteStaticCopy({
       targets: [
         { src: `${cesiumSource}/ThirdParty`, dest: cesiumAssetDir },
@@ -33,5 +35,6 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    include: ["src/**/*.test.ts", "server/**/*.test.ts", "dev/**/*.test.ts"],
   },
 });

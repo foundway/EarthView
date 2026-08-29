@@ -1,41 +1,54 @@
-# EarthView
+# EarthView Search Pulse
 
-A standalone, full-window 3D Earth built with CesiumJS, TypeScript, and Vite.
-
-EarthView contains only rendering and camera controls. It has no Mach9,
-bagel, database, authentication, API, Vercel, analytics, or application-data
-hooks.
+A full-window Cesium globe for exploring geographic Google Search Trends.
+The browser renders only normalized API data; Google credentials and BigQuery
+queries stay in the server runtime.
 
 ## What it does
 
 - Renders a WGS84 globe with atmosphere, fog, stars, and lighting
 - Drapes public Esri World Imagery satellite tiles over the globe
-- Starts from space, centered on North America
+- Plots score/rank-scaled `PolylineGlow` beams at deterministic country centroids
+- Switches between top and rising searches with country and term filters
+- Shows source, refresh, coverage, loading, error, and empty states
 - Supports orbit, zoom, tilt, geocoding, Home, and fullscreen
 - Supports responsive macOS trackpad pinch in Chrome, Firefox, and Safari
-- Requires no API key or environment variables
+- Uses Google's `bigquery-public-data.google_trends` international tables
 
 ## Requirements
 
 - Node.js 22 or newer
 - npm
 - Internet access at runtime for Esri imagery tiles and Cesium's geocoder
+- A Google Cloud project with BigQuery API access for live Trends data
 
 ## Run locally
 
 ```bash
 npm install
+cp .env.example .env.local
+gcloud auth application-default login
 npm run dev
 ```
 
 Open <http://localhost:5173>.
+
+Set `GOOGLE_CLOUD_PROJECT` in `.env.local` to the project that should be billed
+for BigQuery queries. ADC can come from `gcloud auth application-default login`
+or `GOOGLE_APPLICATION_CREDENTIALS`. Serverless deployments may instead set
+`GOOGLE_SERVICE_ACCOUNT_JSON`, or `GOOGLE_CLIENT_EMAIL` plus
+`GOOGLE_PRIVATE_KEY`. Never prefix these variables with `VITE_`.
+
+When local credentials or configuration are unavailable, Vite serves a
+deterministic demonstration fixture and labels it clearly in the HUD. The
+deployed `/api/trends` endpoint never falls back to fixture data.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
 | `npm run dev` | Vite development server on port 5173 |
-| `npm test` | Camera-control unit tests |
+| `npm test` | API, HUD, beam mapping, and camera-control tests |
 | `npm run typecheck` | TypeScript validation |
 | `npm run build` | Typecheck and produce static output in `dist/` |
 | `npm run preview` | Serve the production build locally |
@@ -56,16 +69,38 @@ Open <http://localhost:5173>.
 ## Architecture
 
 ```text
-index.html
-└── src/main.ts
-    └── createEarthViewer.ts
-        ├── config.ts             # home camera + imagery URL
-        └── cameraControls.ts     # orbit/zoom/tilt + trackpad pinch
+api/trends.ts                     # Vercel-style production endpoint
+server/
+├── trends.ts                     # validation, partition lookup, query, normalization
+└── trendsFixture.ts              # development-only deterministic fallback
+dev/trendsApiPlugin.ts            # local /api/trends Vite middleware
+src/
+├── main.ts                       # latest-request-wins orchestration
+├── createEarthViewer.ts          # unchanged globe and camera setup
+├── data/                         # browser fetch/types + country centroids
+├── layers/                       # Cesium beams + pure visual mapping
+└── ui/trendsHud.ts               # responsive dashboard states and controls
 ```
 
-Cesium owns the globe mesh, WebGL renderer, camera math, atmosphere, imagery
-tiling, and default toolbar. EarthView configures those APIs; it does not
-implement a globe renderer from scratch.
+The API first reads the latest partition ID from BigQuery
+`INFORMATION_SCHEMA.PARTITIONS`, then queries only that exact
+`refresh_date` partition and its newest week. Inputs are parameterized,
+validated, and capped at 100 rows. One strongest term is returned per country,
+with international subregions aggregated explicitly.
+
+## Geographic coverage and semantics
+
+This version deliberately uses a reliable international country-centroid
+subset. It does not guess US DMA coordinates or runtime-geocode region names.
+The centroid map covers the approximately 50 countries currently represented
+by the public international dataset; unmapped ISO codes are omitted and
+reported in response metadata and the HUD.
+
+Each beam represents the strongest matching country/term aggregate from the
+latest week. Length and alpha encode the dataset's 0–100 score, width also
+emphasizes rank, and a deterministic term hash controls color. Google describes
+`score` as relative search interest over time, so beam sizes should not be read
+as absolute query volume or direct cross-term volume.
 
 ### Static Cesium assets
 
@@ -113,48 +148,23 @@ export const HOME_VIEW = {
 };
 ```
 
-## Adding application data later
-
-Keep data concerns outside `createEarthViewer.ts`. A clean pattern is:
-
-```text
-src/
-├── data/       # fetch + validate domain data
-├── layers/     # convert domain data into Cesium entities/primitives
-└── ui/         # controls, legends, selection panels
-```
-
-Example:
-
-```ts
-import { Cartesian3, Color } from "cesium";
-
-viewer.entities.add({
-  position: Cartesian3.fromDegrees(-79.9959, 40.4406, 0),
-  point: {
-    pixelSize: 10,
-    color: Color.CYAN,
-  },
-});
-```
-
-For large datasets, prefer `CustomDataSource`, `PrimitiveCollection`, or
-Cesium 3D Tiles rather than thousands of independent UI-managed objects.
-
 ## Deployment
 
-`npm run build` produces a static `dist/` directory. Deploy it to any static
-host:
-
-- GitHub Pages (recommended preview — see below)
-- Cloudflare Pages
-- Netlify
-- Vercel
-- S3 + CloudFront
-- nginx
+Live Trends data requires a Node runtime. Deploy the repository to Vercel so
+`api/trends.ts` runs as a serverless function and the Vite output is served
+from `dist` (`vercel.json`). Add the same server-only Google variables in
+project settings. The service account needs permission to create BigQuery jobs
+in the billing project; public Trends tables are read from
+`bigquery-public-data`. Live data will not appear until those variables are
+set.
 
 The host must serve the files under `dist/cesiumStatic/` at the same path the
-app uses for `CESIUM_BASE_URL`. No server runtime is otherwise required.
+app uses for `CESIUM_BASE_URL`. A non-Vercel host needs an equivalent Node
+endpoint for `/api/trends`; static hosting alone is not sufficient for live
+queries.
+
+GitHub Pages can still publish the static globe (see below), but it cannot run
+BigQuery. Without a separate API origin, the HUD will not load live Trends.
 
 ### GitHub Pages preview
 
