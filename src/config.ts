@@ -1,8 +1,14 @@
+import {
+  HOME_HEIGHT_METERS,
+  HOME_LATITUDE_DEG,
+  HOME_LONGITUDE_DEG,
+} from "./earth/homeView";
+
 /** Initial camera: full Earth centered on North America. */
 export const HOME_VIEW = {
-  longitudeDegrees: -98.5795,
-  latitudeDegrees: 39.8283,
-  heightMeters: 18_000_000,
+  longitudeDegrees: HOME_LONGITUDE_DEG,
+  latitudeDegrees: HOME_LATITUDE_DEG,
+  heightMeters: HOME_HEIGHT_METERS,
 } as const;
 
 /**

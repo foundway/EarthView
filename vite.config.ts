@@ -25,8 +25,17 @@ export default defineConfig({
       ],
     }),
   ],
+  // 4000, not Vite's default 5173: Marauder holds that port with strictPort,
+  // and two globe apps fighting over it reads as "the globe is broken".
   server: {
-    port: 5173,
+    host: "::",
+    port: 4000,
+    strictPort: true,
+  },
+  preview: {
+    host: "::",
+    port: 4000,
+    strictPort: true,
   },
   build: {
     outDir: "dist",
