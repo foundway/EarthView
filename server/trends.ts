@@ -77,22 +77,22 @@ export function buildTrendsSql(mode: TrendsMode): string {
     ),
     country_terms AS (
       SELECT
-        country_code,
-        ARRAY_AGG(country_name IGNORE NULLS ORDER BY rank LIMIT 1)[SAFE_OFFSET(0)] AS country_name,
-        term,
-        MIN(rank) AS rank,
-        MAX(score) AS score,
-        ${gain} AS percent_gain,
-        MAX(week) AS week,
-        COUNT(DISTINCT region_code) AS contributing_regions
-      FROM \`bigquery-public-data.google_trends.${table}\`
+        trends.country_code,
+        ARRAY_AGG(trends.country_name IGNORE NULLS ORDER BY trends.rank LIMIT 1)[SAFE_OFFSET(0)] AS country_name,
+        trends.term,
+        MIN(trends.rank) AS rank,
+        MAX(trends.score) AS score,
+        ${gain === "MAX(percent_gain)" ? "MAX(trends.percent_gain)" : gain} AS percent_gain,
+        MAX(trends.week) AS week,
+        COUNT(DISTINCT trends.region_code) AS contributing_regions
+      FROM \`bigquery-public-data.google_trends.${table}\` trends
       CROSS JOIN current_week
-      WHERE refresh_date = @refreshDate
-        AND week = current_week.week
-        AND country_code IS NOT NULL
-        AND (@country IS NULL OR country_code = @country)
-        AND (@term IS NULL OR LOWER(term) LIKE CONCAT('%', LOWER(@term), '%'))
-      GROUP BY country_code, term
+      WHERE trends.refresh_date = @refreshDate
+        AND trends.week = current_week.week
+        AND trends.country_code IS NOT NULL
+        AND (@country IS NULL OR trends.country_code = @country)
+        AND (@term IS NULL OR LOWER(trends.term) LIKE CONCAT('%', LOWER(@term), '%'))
+      GROUP BY trends.country_code, trends.term
     )
     SELECT *
     FROM country_terms
@@ -195,13 +195,23 @@ export function createBigQueryClient(env: NodeJS.ProcessEnv = process.env): BigQ
   return new BigQuery(bigQueryOptionsFromEnv(env));
 }
 
-export interface TrendsBigQueryClient {
-  query(options: {
-    query: string;
-    params?: Record<string, unknown>;
-    location?: string;
-  }): Promise<[unknown[]]>;
+export interface TrendsBigQueryQueryOptions {
+  query: string;
+  params?: Record<string, unknown>;
+  types?: Record<string, string>;
+  location?: string;
 }
+
+export interface TrendsBigQueryClient {
+  query(options: TrendsBigQueryQueryOptions): Promise<[unknown[]]>;
+}
+
+const TRENDS_QUERY_TYPES = {
+  refreshDate: "STRING",
+  country: "STRING",
+  term: "STRING",
+  limit: "INT64",
+} as const;
 
 async function latestPartition(
   client: TrendsBigQueryClient,
@@ -251,6 +261,7 @@ export async function loadTrends(
       term: query.term,
       limit: query.limit,
     },
+    types: TRENDS_QUERY_TYPES,
   });
   const { trends, omittedUnmappedRows } = normalizeTrendRows(rawRows as RawTrendRow[]);
   const week = trends[0]?.week ?? "";

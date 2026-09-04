@@ -35,8 +35,9 @@ describe("trends SQL and normalization", () => {
   it("uses the selected fixed table and an exact partition parameter", () => {
     const sql = buildTrendsSql("rising");
     expect(sql).toContain("international_top_rising_terms");
-    expect(sql).toContain("refresh_date = @refreshDate");
-    expect(sql).toContain("MAX(percent_gain)");
+    expect(sql).toContain("trends.refresh_date = @refreshDate");
+    expect(sql).toContain("trends.week = current_week.week");
+    expect(sql).toContain("MAX(trends.percent_gain)");
   });
 
   it("maps known ISO codes and explicitly counts unmapped rows", () => {
@@ -85,5 +86,11 @@ describe("trends SQL and normalization", () => {
     expect(response.metadata.source).toBe("google-bigquery");
     expect(query).toHaveBeenCalledTimes(2);
     expect(query.mock.calls[1]?.[0].params).toMatchObject({ refreshDate: "2026-08-28", limit: 20 });
+    expect(query.mock.calls[1]?.[0].types).toMatchObject({
+      refreshDate: "STRING",
+      country: "STRING",
+      term: "STRING",
+      limit: "INT64",
+    });
   });
 });
