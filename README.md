@@ -9,9 +9,13 @@ queries stay in the server runtime.
 - Renders a WGS84 globe with atmosphere, fog, stars, and lighting
 - Drapes public Esri World Imagery satellite tiles over the globe
 - Plots score/rank-scaled `PolylineGlow` beams at deterministic country centroids
+- Labels each pin with the search term and score (or rising %), dodging overlaps like Marauder
 - Switches between top and rising searches with country and term filters
 - Shows source, refresh, coverage, loading, error, and empty states
-- Supports orbit, zoom, tilt, geocoding, Home, and fullscreen
+- Supports orbit and zoom. The view stays nadir (tilt is off)
+- Home returns to the North America space view and restarts slow Earth rotation
+- Direct drag, scroll, or pinch exits rotation; fade/seek keeps a trend origin on camera
+- Search uses Mapbox when `VITE_MAPBOX_ACCESS_TOKEN` is set; otherwise it reports "(not found)"
 - Supports responsive macOS trackpad pinch in Chrome, Firefox, and Safari
 - Uses Google's `bigquery-public-data.google_trends` international tables
 
@@ -31,7 +35,8 @@ gcloud auth application-default login
 npm run dev
 ```
 
-Open <http://localhost:5173>.
+Open <http://localhost:4000>. Port 4000 is deliberate: Marauder, the internal
+app EarthView shares its globe code with, holds 5173.
 
 Set `GOOGLE_CLOUD_PROJECT` in `.env.local` to the project that should be billed
 for BigQuery queries. ADC can come from `gcloud auth application-default login`
@@ -47,7 +52,7 @@ deployed `/api/trends` endpoint never falls back to fixture data.
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` | Vite development server on port 5173 |
+| `npm run dev` | Vite development server on port 4000 |
 | `npm test` | API, HUD, beam mapping, and camera-control tests |
 | `npm run typecheck` | TypeScript validation |
 | `npm run build` | Typecheck and produce static output in `dist/` |
@@ -57,14 +62,12 @@ deployed `/api/trends` endpoint never falls back to fixture data.
 
 | Input | Action |
 |---|---|
-| Left drag | Orbit |
-| Mouse wheel / two-finger scroll | Zoom |
+| Left drag | Orbit (nadir; tilt is off) |
+| Mouse wheel / two-finger scroll | Zoom, scaled by live elevation |
 | Trackpad pinch | Zoom with 10× sensitivity |
-| Right drag | Tilt |
-| Ctrl + left drag | Alternate tilt |
-| Home button | Return to initial space view |
-| Search button | Cesium geocoder |
-| Bottom-right button | Fullscreen |
+| Home button | Return to the North America space view and restart rotation |
+| Search button | Mapbox geocoder when a token is set; otherwise "(not found)" |
+| Click a pin chip | Fly to that country; crowded chips share a label and pick the strongest term |
 
 ## Architecture
 
@@ -75,11 +78,12 @@ server/
 └── trendsFixture.ts              # development-only deterministic fallback
 dev/trendsApiPlugin.ts            # local /api/trends Vite middleware
 src/
-├── main.ts                       # latest-request-wins orchestration
-├── createEarthViewer.ts          # unchanged globe and camera setup
+├── main.ts                       # latest-request-wins orchestration + rotation
+├── earth/                        # Marauder camera, fly-to, MSAA, Home rotation
+├── settings/                     # persisted camera and beam preferences
 ├── data/                         # browser fetch/types + country centroids
-├── layers/                       # Cesium beams + pure visual mapping
-└── ui/trendsHud.ts               # responsive dashboard states and controls
+├── layers/                       # glow beams, pin chips with dodge/merge, mapping
+└── ui/                           # HUD, settings, elevation readout
 ```
 
 The API first reads the latest partition ID from BigQuery
@@ -97,10 +101,13 @@ by the public international dataset; unmapped ISO codes are omitted and
 reported in response metadata and the HUD.
 
 Each beam represents the strongest matching country/term aggregate from the
-latest week. Length and alpha encode the dataset's 0–100 score, width also
-emphasizes rank, and a deterministic term hash controls color. Google describes
-`score` as relative search interest over time, so beam sizes should not be read
-as absolute query volume or direct cross-term volume.
+latest week. Length encodes the dataset's 0–100 score (then the Settings length
+slider), width and transparency follow Settings, and a deterministic term hash
+controls color. A pin chip shows that **term** plus the **score** (or rising
+**percent gain**); close chips slide apart, and pins that still overlap share one
+chip with a count. Beams fade as their height no longer fits the view, and far-side
+beams are hidden by the globe. Google describes `score` as relative search
+interest over time, so beam sizes should not be read as absolute query volume.
 
 ### Static Cesium assets
 
@@ -138,15 +145,8 @@ self-hosted quantized-mesh provider can avoid Ion.
 
 ## Changing the initial view
 
-Edit `HOME_VIEW` in `src/config.ts`:
-
-```ts
-export const HOME_VIEW = {
-  longitudeDegrees: -98.5795,
-  latitudeDegrees: 39.8283,
-  heightMeters: 18_000_000,
-};
-```
+Edit `HOME_LONGITUDE_DEG`, `HOME_LATITUDE_DEG`, and `HOME_HEIGHT_METERS` in
+`src/earth/homeView.ts`.
 
 ## Deployment
 

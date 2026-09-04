@@ -1,120 +1,234 @@
 import {
-  ArcType,
   Cartesian2,
   Cartesian3,
   Color,
   CustomDataSource,
-  DistanceDisplayCondition,
-  HeightReference,
-  LabelStyle,
-  NearFarScalar,
-  PolylineGlowMaterialProperty,
+  PolylineCollection,
+  SceneTransforms,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
-  VerticalOrigin,
   type Viewer,
 } from "cesium";
+import { CameraGate, frameNowMs, readCameraPose } from "../earth/cameraActivity";
+import { flyViewerCamera } from "../earth/cameraFlight";
+import { verticalFovRadians } from "../earth/cameraFrustum";
+import { chipScreenIfFacing, isOnCameraFacingHemisphere } from "../earth/horizon";
+import { planCameraFlight } from "../earth/zoomSpeed";
 import type { GeographicTrend } from "../data/trendsTypes";
-import { beamPositionsDegrees, mapTrendBeam } from "./trendBeamMapping";
+import {
+  clampBeamAlpha,
+  clampBeamLengthMultiplier,
+  clampBeamWidthPx,
+  DEFAULT_SETTINGS,
+  type EarthViewSettings,
+} from "../settings/model";
+import {
+  addBeam,
+  applyBeamColor,
+  applyBeamWidth,
+  beamFadeAlphaScale,
+  beamLineVisible,
+  beamVisibleFraction,
+  quantizeBeamFade,
+  type BeamPrimitive,
+} from "./beamGlow";
+import { mapTrendBeam } from "./trendBeamMapping";
 
 export interface TrendBeamLayerOptions {
   readonly onSelect?: (id: string) => void;
 }
 
+export interface VisibleTrendPin {
+  readonly id: string;
+  readonly memberIds: readonly string[];
+  readonly screenX: number;
+  readonly screenY: number;
+  readonly score: number;
+}
+
+interface DrawnBeam {
+  readonly id: string;
+  readonly trend: GeographicTrend;
+  readonly primitive: BeamPrimitive;
+  readonly color: Color;
+  readonly heightMeters: number;
+}
+
 export class TrendBeamLayer {
   private readonly source = new CustomDataSource("google-search-trends");
+  private readonly polylines = new PolylineCollection();
   private readonly clickHandler: ScreenSpaceEventHandler;
-  private readonly records = new Map<string, GeographicTrend>();
+  private readonly gate = new CameraGate();
+  private readonly drawn: DrawnBeam[] = [];
   private visible = true;
+  private settings: EarthViewSettings = DEFAULT_SETTINGS;
+  private lastTrends: readonly GeographicTrend[] = [];
 
   constructor(
     private readonly viewer: Viewer,
     options: TrendBeamLayerOptions = {},
   ) {
     void viewer.dataSources.add(this.source);
+    viewer.scene.primitives.add(this.polylines);
+    viewer.scene.preRender.addEventListener(this.onFrame);
     this.clickHandler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     this.clickHandler.setInputAction((movement: { position: Cartesian2 }) => {
-      const picked = viewer.scene.pick(movement.position) as { id?: { id?: string } } | undefined;
-      const id = picked?.id?.id;
-      if (id?.startsWith("trend:")) options.onSelect?.(id.slice("trend:".length));
+      const picked = viewer.scene.pick(movement.position) as { id?: string } | undefined;
+      const id = picked?.id;
+      if (id?.startsWith("trend:") && id.endsWith(":beam")) {
+        options.onSelect?.(id.slice("trend:".length, -":beam".length));
+      }
     }, ScreenSpaceEventType.LEFT_CLICK);
   }
 
+  setSettings(settings: EarthViewSettings): void {
+    this.settings = settings;
+    this.gate.force();
+    if (this.lastTrends.length > 0) {
+      this.render(this.lastTrends);
+    }
+  }
+
   render(trends: readonly GeographicTrend[]): void {
-    this.clear();
-    trends.forEach((trend, index) => {
-      this.records.set(trend.id, trend);
+    this.lastTrends = trends;
+    this.clearDrawn();
+    const length = clampBeamLengthMultiplier(this.settings.beamLengthMultiplier);
+    const widthPx = clampBeamWidthPx(this.settings.beamWidthPx);
+    const beamAlpha = clampBeamAlpha(this.settings.beamAlpha);
+
+    for (const trend of trends) {
       const visual = mapTrendBeam(trend.score, trend.rank, trend.term);
-      const color = Color.fromHsl(visual.hue / 360, 0.82, 0.62, visual.alpha);
-      const { longitude, latitude } = trend.location;
-      this.source.entities.add({
-        id: `trend:${trend.id}`,
-        name: `${trend.term} · ${trend.location.countryName}`,
-        position: Cartesian3.fromDegrees(longitude, latitude),
-        point: {
-          color: color.withAlpha(0.95),
-          pixelSize: 6,
-          outlineColor: Color.WHITE.withAlpha(0.55),
-          outlineWidth: 1,
-          heightReference: HeightReference.CLAMP_TO_GROUND,
-        },
-        polyline: {
-          positions: Cartesian3.fromDegreesArrayHeights(
-            beamPositionsDegrees(longitude, latitude, visual.heightMeters),
-          ),
-          // A beam is vertical, so its endpoints share a longitude and
-          // latitude. Geodesic subdivision degenerates on that path and leaves
-          // the glow taper pointing the wrong way.
-          arcType: ArcType.NONE,
-          width: visual.widthPixels,
-          material: new PolylineGlowMaterialProperty({
-            color,
-            glowPower: 0.18,
-            taperPower: 0.55,
-          }),
-        },
-        label:
-          index < 8
-            ? {
-                text: trend.term,
-                font: "600 12px Inter, sans-serif",
-                fillColor: Color.WHITE.withAlpha(0.9),
-                outlineColor: Color.BLACK.withAlpha(0.9),
-                outlineWidth: 3,
-                style: LabelStyle.FILL_AND_OUTLINE,
-                pixelOffset: new Cartesian2(0, -14),
-                verticalOrigin: VerticalOrigin.BOTTOM,
-                distanceDisplayCondition: new DistanceDisplayCondition(0, 16_000_000),
-                translucencyByDistance: new NearFarScalar(2_000_000, 1, 16_000_000, 0),
-              }
-            : undefined,
-        show: this.visible,
+      const heightMeters = visual.heightMeters * length;
+      const color = Color.fromHsl(visual.hue / 360, 0.82, 0.62, 1);
+      const primitive = addBeam(this.polylines, this.source, `trend:${trend.id}`, {
+        lon: trend.location.longitude,
+        lat: trend.location.latitude,
+        heightMeters,
+        color,
+        widthPx,
+        beamAlpha,
       });
-    });
+      this.drawn.push({ id: trend.id, trend, primitive, color, heightMeters });
+    }
+    this.gate.force();
   }
 
   clear(): void {
-    this.records.clear();
-    this.source.entities.removeAll();
+    this.lastTrends = [];
+    this.clearDrawn();
   }
 
   setVisible(visible: boolean): void {
     this.visible = visible;
     this.source.show = visible;
+    this.polylines.show = visible;
+    this.gate.force();
+  }
+
+  origins(): Array<{ longitude: number; latitude: number }> {
+    return this.drawn.map((beam) => ({
+      longitude: beam.trend.location.longitude,
+      latitude: beam.trend.location.latitude,
+    }));
+  }
+
+  getVisiblePins(): readonly VisibleTrendPin[] {
+    if (!this.visible) {
+      return [];
+    }
+    const scene = this.viewer.scene;
+    const cameraPosition = this.viewer.camera.positionWC;
+    const ellipsoid = scene.globe.ellipsoid;
+    const pins: VisibleTrendPin[] = [];
+    for (const beam of this.drawn) {
+      const origin = beam.primitive.positions[1] ?? beam.primitive.positions[0];
+      const screen = chipScreenIfFacing(
+        isOnCameraFacingHemisphere(origin, cameraPosition, ellipsoid),
+        SceneTransforms.worldToWindowCoordinates(scene, origin),
+      );
+      if (!screen) {
+        continue;
+      }
+      pins.push({
+        id: beam.id,
+        memberIds: [beam.id],
+        screenX: screen.x,
+        screenY: screen.y,
+        score: beam.trend.score,
+      });
+    }
+    return pins;
+  }
+
+  reveal(): void {
+    this.gate.force();
   }
 
   flyTo(id: string): void {
-    const trend = this.records.get(id);
-    if (!trend) return;
-    const { longitude, latitude } = trend.location;
-    this.viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(longitude, latitude, 4_200_000),
-      duration: 1.2,
+    const beam = this.drawn.find((entry) => entry.id === id);
+    if (!beam) return;
+    const { longitude, latitude } = beam.trend.location;
+    const destination = Cartesian3.fromDegrees(
+      longitude,
+      latitude,
+      Math.max(beam.heightMeters * 1.45, 2_400_000),
+    );
+    flyViewerCamera(this.viewer, {
+      destination,
+      ...planCameraFlight(
+        this.viewer.camera.positionWC,
+        destination,
+        this.settings.baseZoomSpeedKmPerSecond,
+        1,
+        this.viewer.camera,
+        this.settings.flightEaseSeconds,
+      ),
     });
   }
 
   destroy(): void {
+    this.viewer.scene.preRender.removeEventListener(this.onFrame);
     this.clickHandler.destroy();
+    this.viewer.scene.primitives.remove(this.polylines);
     this.viewer.dataSources.remove(this.source, true);
   }
+
+  private clearDrawn(): void {
+    this.drawn.length = 0;
+    this.polylines.removeAll();
+    this.source.entities.removeAll();
+  }
+
+  private readonly onFrame = (): void => {
+    if (!this.visible || this.drawn.length === 0) {
+      return;
+    }
+    if (!this.gate.shouldRun(readCameraPose(this.viewer), frameNowMs())) {
+      return;
+    }
+
+    const cameraPosition = this.viewer.camera.positionWC;
+    const ellipsoid = this.viewer.scene.globe.ellipsoid;
+    const fov = verticalFovRadians(this.viewer);
+    const height = this.viewer.camera.positionCartographic.height;
+    const beamAlpha = clampBeamAlpha(this.settings.beamAlpha);
+
+    for (const beam of this.drawn) {
+      const facing = isOnCameraFacingHemisphere(
+        beam.primitive.positions[1] ?? beam.primitive.positions[0],
+        cameraPosition,
+        ellipsoid,
+      );
+      const visibleFraction =
+        fov === null ? 1 : beamVisibleFraction(beam.heightMeters, height, fov);
+      const fade = quantizeBeamFade(beamFadeAlphaScale(visibleFraction));
+      const showLine = beamLineVisible(facing, beam.heightMeters, fade);
+      beam.primitive.polyline.show = showLine;
+      if (showLine) {
+        applyBeamColor(beam.primitive.polyline, beam.color, fade, beamAlpha);
+        applyBeamWidth(beam.primitive.polyline, clampBeamWidthPx(this.settings.beamWidthPx));
+      }
+      beam.primitive.baseEntity.show = facing;
+    }
+  };
 }

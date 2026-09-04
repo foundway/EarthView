@@ -1,5 +1,6 @@
 import { COUNTRY_CENTROIDS } from "../data/countryCentroids";
 import type { TrendsMode, TrendsResponse } from "../data/trendsTypes";
+import { GEAR_PATH, iconMarkup } from "./icons";
 
 export interface HudFilters {
   readonly mode: TrendsMode;
@@ -15,6 +16,7 @@ export interface TrendsHudOptions {
 }
 
 export interface TrendsHud {
+  readonly settingsToggle: HTMLButtonElement;
   setLoading(): void;
   setError(message: string): void;
   setData(data: TrendsResponse): void;
@@ -48,9 +50,14 @@ export function createTrendsHud(options: TrendsHudOptions): TrendsHud {
         <span class="hud-eyebrow">EarthView</span>
         <h1>Search pulse</h1>
       </div>
-      <button class="layer-toggle" type="button" aria-pressed="true" aria-label="Hide trend beams" title="Toggle trend beams">
-        <span aria-hidden="true">◉</span>
-      </button>
+      <div class="brand-actions">
+        <button class="layer-toggle" type="button" aria-pressed="true" aria-label="Hide trend beams" title="Toggle trend beams">
+          <span aria-hidden="true">◉</span>
+        </button>
+        <button type="button" class="settings-toggle" data-slot="settings-toggle" aria-label="Settings" aria-expanded="false">
+          ${iconMarkup(GEAR_PATH)}
+        </button>
+      </div>
     </header>
     <p class="hud-deck">Geographic Google Search Trends on the living Earth.</p>
     <section class="control-stack" aria-label="Trend controls">
@@ -103,13 +110,26 @@ export function createTrendsHud(options: TrendsHudOptions): TrendsHud {
   const form = options.root.querySelector<HTMLFormElement>(".term-filter");
   const input = options.root.querySelector<HTMLInputElement>('input[type="search"]');
   const visibility = options.root.querySelector<HTMLButtonElement>(".layer-toggle");
+  const settingsToggle = options.root.querySelector<HTMLButtonElement>("[data-slot=settings-toggle]");
   const count = options.root.querySelector<HTMLElement>('[data-role="count"]');
   const week = options.root.querySelector<HTMLElement>('[data-role="week"]');
   const source = options.root.querySelector<HTMLElement>('[data-role="source"]');
   const coverage = options.root.querySelector<HTMLElement>('[data-role="coverage"]');
   const status = options.root.querySelector<HTMLElement>('[data-role="status"]');
   const list = options.root.querySelector<HTMLOListElement>(".trend-list");
-  if (!country || !form || !input || !visibility || !count || !week || !source || !coverage || !status || !list) {
+  if (
+    !country ||
+    !form ||
+    !input ||
+    !visibility ||
+    !settingsToggle ||
+    !count ||
+    !week ||
+    !source ||
+    !coverage ||
+    !status ||
+    !list
+  ) {
     throw new Error("Trends HUD markup is incomplete");
   }
 
@@ -150,6 +170,7 @@ export function createTrendsHud(options: TrendsHudOptions): TrendsHud {
   };
 
   return {
+    settingsToggle,
     setLoading() {
       options.root.dataset.state = "loading";
       count.textContent = "…";
